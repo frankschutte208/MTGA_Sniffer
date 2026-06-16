@@ -1,0 +1,23 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.log
+*.db
+*.sqlite
+.cursor/
+apps/tray-ui/embedded-agent/
+apps/sync-agent/data/
+apps/sync-agent/fixtures-output/
+
+# Electron build outputs (installer + unpacked app)
+apps/tray-ui/dist-new/
+apps/tray-ui/dist/
+
+# Temp extraction / build cruft
+.tmp-asar-extract/
+scan-work/
+
+# Python bytecode
+__pycache__/
+*.pyc

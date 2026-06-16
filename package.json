@@ -1,0 +1,21 @@
+{
+  "name": "mtga_sniffer",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run -ws build",
+    "dev:sync-agent": "npm run -w @mtga/sync-agent dev",
+    "dev:tray": "npm run -w @mtga/tray-ui dev",
+    "test": "npm run -ws test"
+  },
+  "keywords": [
+    "mtga",
+    "collection"
+  ],
+  "license": "MIT",
+  "description": "MTGA Sniffer executable monorepo"
+}

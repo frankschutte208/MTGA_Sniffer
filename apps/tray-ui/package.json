@@ -1,0 +1,53 @@
+{
+  "name": "@mtga/tray-ui",
+  "version": "0.1.2",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "prepare:agent": "node ./scripts/prepare-agent.mjs",
+    "build": "npm run -w @mtga/shared-types build && npm run -w @mtga/sync-agent build && npm run prepare:agent",
+    "dev": "npm run build && electron ./src/main.js",
+    "preflight:scanner": "node ../../scripts/preflight-memory-scan.mjs",
+    "dist:win": "npm run preflight:scanner && npm run build && electron-builder --win portable",
+    "test": "node --test \"tests/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "sql.js": "^1.13.0"
+  },
+  "devDependencies": {
+    "electron": "35.2.1",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.mtga.sniffer",
+    "productName": "MTGA Sniffer",
+    "asar": true,
+    "asarUnpack": [
+      "embedded-agent/vendor/**"
+    ],
+    "files": [
+      "src/**",
+      "assets/**",
+      "embedded-agent/**",
+      "package.json"
+    ],
+    "icon": "assets/mtga-sniffer-icon.png",
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "MTGA-Sniffer-${version}.exe"
+    }
+  }
+}

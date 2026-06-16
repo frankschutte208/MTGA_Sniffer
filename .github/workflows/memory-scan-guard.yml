@@ -1,0 +1,53 @@
+name: Memory Scan Guard
+
+on:
+  pull_request:
+    paths:
+      - "vendor/MTGA-collection-exporter/**"
+      - "apps/sync-agent/src/runtime/memoryScanner.ts"
+      - "apps/sync-agent/src/runtime/scanner/**"
+      - "apps/sync-agent/scripts/mtga_memory_scan.py"
+      - "apps/sync-agent/tests/fixtures/memory-scan/**"
+      - "apps/sync-agent/tests/memory-scan.contract.test.ts"
+      - "apps/tray-ui/src/collectorDataMigration.js"
+      - "apps/tray-ui/tests/collectorDataMigration.test.mjs"
+      - "packages/shared-types/src/index.ts"
+      - "scripts/dev/run-pinned-mtg.py"
+      - "scripts/preflight-memory-scan.mjs"
+      - ".github/CODEOWNERS"
+      - ".github/workflows/memory-scan-guard.yml"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+  push:
+    branches: ["main"]
+    paths:
+      - "vendor/MTGA-collection-exporter/**"
+      - "apps/sync-agent/src/runtime/memoryScanner.ts"
+      - "apps/sync-agent/src/runtime/scanner/**"
+      - "apps/sync-agent/scripts/mtga_memory_scan.py"
+      - "apps/sync-agent/tests/fixtures/memory-scan/**"
+      - "apps/sync-agent/tests/memory-scan.contract.test.ts"
+      - "apps/tray-ui/src/collectorDataMigration.js"
+      - "apps/tray-ui/tests/collectorDataMigration.test.mjs"
+      - "packages/shared-types/src/index.ts"
+      - "scripts/dev/run-pinned-mtg.py"
+      - "scripts/preflight-memory-scan.mjs"
+
+jobs:
+  scanner-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Fail if custom scan script was reintroduced
+        run: |
+          if [ -f apps/sync-agent/scripts/mtga_memory_scan.py ]; then
+            echo "mtga_memory_scan.py must not be reintroduced — use vendor MTGA-collection-exporter.exe"
+            exit 1
+          fi
+      - name: Run scanner preflight gate
+        run: node scripts/preflight-memory-scan.mjs

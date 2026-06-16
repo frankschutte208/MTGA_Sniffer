@@ -1,0 +1,25 @@
+{
+  "scanApiVersion": 1,
+  "ok": true,
+  "cards": {
+    "1001": 4,
+    "1002": 2,
+    "999999": 3
+  },
+  "diagnostics": [
+    "memory_scan_regions:4234",
+    "memory_scan_candidate_blocks:512",
+    "memory_scan_read_errors:0",
+    "memory_scan_anchors_provided:6",
+    "memory_scan_anchors_matched:6",
+    "memory_scan_exit_code:0"
+  ],
+  "metrics": {
+    "inspectedRegions": 4234,
+    "candidateBlocks": 512,
+    "readErrors": 0,
+    "anchorsProvided": 6,
+    "anchorsMatched": 6,
+    "exitCode": 0
+  }
+}

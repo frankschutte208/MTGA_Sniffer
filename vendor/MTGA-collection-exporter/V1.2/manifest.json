@@ -1,0 +1,10 @@
+{
+  "version": "V1.2",
+  "source": "https://github.com/NthPhantom10/MTGA-collection-exporter/releases/tag/V1.2",
+  "downloadUrl": "https://github.com/NthPhantom10/MTGA-collection-exporter/releases/download/V1.2/MTGA-collection-exporter.zip",
+  "exeName": "MTGA-collection-exporter.exe",
+  "mtgPyName": "mtg.py",
+  "sha256": "1f56385170a364bb76347431da3753d0d18bd1582f5b7245075f4a0e1740243f",
+  "mtgPySha256": "6cfa43a8c8e0398903b9b411fb6cdbdff3bbe38bd13f1fcd929dccc3f477b922",
+  "pinnedAt": "2026-05-24"
+}

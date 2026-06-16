@@ -1,0 +1,15 @@
+{
+  "stdout": {
+    "scanApiVersion": 1,
+    "ok": false,
+    "error": "anchors_missing",
+    "cards": {},
+    "inspected_regions": 4000,
+    "candidate_blocks": 500,
+    "read_errors": 0,
+    "anchors_provided": 0,
+    "anchors_matched": 0
+  },
+  "stderr": "",
+  "exitCode": 3
+}

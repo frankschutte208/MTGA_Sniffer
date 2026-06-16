@@ -1,0 +1,21 @@
+{
+  "scanApiVersion": 1,
+  "ok": false,
+  "cards": {},
+  "diagnostics": [
+    "memory_scan_regions:4190",
+    "memory_scan_candidate_blocks:550",
+    "memory_scan_read_errors:0",
+    "memory_scan_anchors_provided:6",
+    "memory_scan_anchors_matched:1",
+    "memory_scan_exit_code:2"
+  ],
+  "metrics": {
+    "inspectedRegions": 4190,
+    "candidateBlocks": 550,
+    "readErrors": 0,
+    "anchorsProvided": 6,
+    "anchorsMatched": 1,
+    "exitCode": 2
+  }
+}

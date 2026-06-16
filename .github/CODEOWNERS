@@ -1,0 +1,10 @@
+# Scanner paths are owner-locked.
+/vendor/MTGA-collection-exporter/ @frankschutte208
+/apps/sync-agent/src/runtime/memoryScanner.ts @frankschutte208
+/apps/sync-agent/src/runtime/scanner/ @frankschutte208
+/apps/sync-agent/tests/fixtures/memory-scan/ @frankschutte208
+/apps/sync-agent/tests/memory-scan.contract.test.ts @frankschutte208
+/apps/tray-ui/src/collectorDataMigration.js @frankschutte208
+/apps/tray-ui/tests/collectorDataMigration.test.mjs @frankschutte208
+/packages/shared-types/src/index.ts @frankschutte208
+/scripts/preflight-memory-scan.mjs @frankschutte208

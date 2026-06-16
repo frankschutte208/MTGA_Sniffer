@@ -1,0 +1,22 @@
+{
+  "scanApiVersion": 1,
+  "ok": false,
+  "cards": {},
+  "diagnostics": [
+    "memory_scan_error:anchors_missing",
+    "memory_scan_regions:4000",
+    "memory_scan_candidate_blocks:500",
+    "memory_scan_read_errors:0",
+    "memory_scan_anchors_provided:0",
+    "memory_scan_anchors_matched:0",
+    "memory_scan_exit_code:3"
+  ],
+  "metrics": {
+    "inspectedRegions": 4000,
+    "candidateBlocks": 500,
+    "readErrors": 0,
+    "anchorsProvided": 0,
+    "anchorsMatched": 0,
+    "exitCode": 3
+  }
+}

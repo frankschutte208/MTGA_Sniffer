@@ -11,13 +11,13 @@ Tracks your MTGA collection in the background while you play. It reads local gam
 1. Copy the portable app to a permanent folder, for example:
 
    ```
-   %LOCALAPPDATA%\MTGA Sniffer\MTGA-Sniffer-0.1.0.exe
+   %LOCALAPPDATA%\MTGA Sniffer\MTGA-Sniffer-0.1.10.exe
    ```
 
    Build output from this repo:
 
    ```
-   apps\tray-ui\dist\MTGA-Sniffer-0.1.0.exe
+   apps\tray-ui\dist\MTGA-Sniffer-0.1.10.exe
    ```
 
 2. Run the exe once. It stays in the system tray — no terminal or npm required.
@@ -43,7 +43,9 @@ Tracks your MTGA collection in the background while you play. It reads local gam
 
 ## Memory scan fallback
 
-Logs do not always include full per-card counts. The sniffer can read collection data from MTGA memory using the bundled [MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter) binary (no Python install required for the packaged app).
+Logs do not always include full per-card counts. The sniffer can read collection data from MTGA memory using the pinned [MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter) integration.
+
+On PCs with **Python + pymem** installed, the app runs the pinned **`mtg.py`** (most reliable on owner hardware). Otherwise it uses the bundled vendor **exe**. See [integration troubleshooting](docs/integration-troubleshooting.md).
 
 **Before scanning:**
 
@@ -103,6 +105,7 @@ Output: `apps/tray-ui/dist/MTGA-Sniffer-<version>.exe`
 | [Collection data integration](docs/collection-data-integration.md) | **Consumer apps** — where data lives and how to read it |
 | [Sync agent](apps/sync-agent/README.md) | Embedded API, sync behaviour |
 | [Scanner governance](docs/scanner-governance.md) | Memory scan change process |
+| [Integration troubleshooting](docs/integration-troubleshooting.md) | **Maintainers** — scan runtime, error messages, land rarity lessons |
 | [Card styles research](docs/card-styles-research.md) | Deferred research; not on roadmap |
 
 ### Backup to Git

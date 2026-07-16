@@ -1,6 +1,8 @@
 # Memory scanner governance
 
-The memory scanner is **[MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter)** (pinned V1.2). Production uses the pinned **exe**; **mtg.py** is a hash-pinned reference copy for owner diagnostics only.
+The memory scanner is **[MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter)** (pinned V1.2 bundle). The folder contains a hash-pinned **`mtg.py`** and a bundled **exe** — on some machines they are **not behaviour-identical** (exe reports internal v2.0). See [integration troubleshooting](integration-troubleshooting.md).
+
+**Runtime selection (v0.1.10+):** default to **pinned `mtg.py` via Python** when `py -3` and `pymem` are available; fall back to bundled exe when Python is absent. Optional `"useExeRuntime": true` in owner `scan-config.json` forces exe for diagnostics only.
 
 ## Three zones
 
@@ -43,12 +45,14 @@ Optional file at `%USERPROFILE%/AppData/LocalLow/MTGA Sniffer/scan-config.json`:
 ```json
 {
   "debugKeepWorkDir": false,
-  "debugCopyOutputTo": "C:/Users/you/MTGA-scan-debug"
+  "debugCopyOutputTo": "C:/Users/you/MTGA-scan-debug",
+  "useExeRuntime": false
 }
 ```
 
 - `debugKeepWorkDir` — preserve temp scan folder; path appears in diagnostics
 - `debugCopyOutputTo` — copy `mtga_collection.json`, `last_anchors.json`, and `arena_id_lookup.json` after successful scan
+- `useExeRuntime` — **diagnostics only:** force bundled vendor exe even when Python+pymem is installed (often fails with `Database init failed` on owner PC — see [integration-troubleshooting.md](integration-troubleshooting.md))
 
 No scan algorithm belongs in this file.
 
@@ -94,6 +98,15 @@ npm run -w @mtga/tray-ui dist:win
 ```
 
 Preflight verifies exe + mtg.py hashes and fails if custom pymem scan Python reappears under `apps/sync-agent/scripts/`.
+
+## Maintainer troubleshooting
+
+See **[integration-troubleshooting.md](integration-troubleshooting.md)** for:
+
+- Memory scan runtime selection (Python vs exe)
+- Why **not** to map fast scans to “MTGA not running”
+- Basic land rarity bucket fixes
+- Dev probe scripts under `scripts/dev/`
 
 ## Out of scope (deferred)
 

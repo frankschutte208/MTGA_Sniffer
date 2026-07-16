@@ -164,13 +164,22 @@ const parseUpstreamOutput = (raw: string): UpstreamCollectionRow[] => {
   return rows;
 };
 
-const classifyUpstreamLog = (
-  logText: string,
-  scanDurationMs: number,
-): string[] => {
+export const classifyUpstreamLog = (logText: string): string[] => {
   const log = logText.toLowerCase();
+  if (!log.trim()) {
+    return ["memory_scan_upstream_empty_log"];
+  }
+  if (log.includes("database init failed")) {
+    return ["memory_scan_upstream_database_init_failed"];
+  }
+  if (log.includes("scryfall download failed") || log.includes("failed to download database")) {
+    return ["memory_scan_upstream_scryfall_failed"];
+  }
+  if (log.includes("error scanning local files") || log.includes("charmap")) {
+    return ["memory_scan_upstream_local_catalog_failed"];
+  }
   if (log.includes("mtg arena not found") || log.includes("please start the game")) {
-    return ["memory_scan_error:mtga_not_running"];
+    return ["memory_scan_error:attach_failed"];
   }
   if (log.includes("no valid collection data")) {
     return ["memory_scan_upstream_no_blocks"];
@@ -178,10 +187,7 @@ const classifyUpstreamLog = (
   if (log.includes("collection not found")) {
     return ["memory_scan_upstream_anchors_not_found"];
   }
-  if (scanDurationMs < 8000) {
-    return ["memory_scan_error:mtga_not_running"];
-  }
-  return ["memory_scan_upstream_anchors_not_found"];
+  return ["memory_scan_upstream_unclassified_failure"];
 };
 
 const canRunPinnedPython = (): boolean => {
@@ -199,10 +205,10 @@ const spawnUpstreamExe = async (
   scanDir: string,
   vendorDir: string,
   timeoutMs: number,
+  usePython: boolean,
 ): Promise<{ exitCode: number | null; logText: string; runtime: "python" | "exe" }> => {
   const logPath = path.join(scanDir, UPSTREAM_LOG_FILE);
   const mtgPyVendor = path.join(vendorDir, UPSTREAM_MTG_PY_NAME);
-  const usePython = canRunPinnedPython();
 
   let command: string;
   let runtime: "python" | "exe";
@@ -303,6 +309,14 @@ export const invokeUpstreamExporter = async (
     );
     diagnostics.push(`memory_scan_lookup_seeded:${Object.keys(mergedLookup).length}`);
 
+    const usePython = !scanConfig.useExeRuntime && canRunPinnedPython();
+    if (scanConfig.useExeRuntime && canRunPinnedPython()) {
+      diagnostics.push("memory_scan_forced_exe_runtime");
+    }
+    if (!usePython && !scanConfig.useExeRuntime) {
+      diagnostics.push("memory_scan_python_unavailable");
+    }
+
     const vendorDir = path.dirname(exporterPath);
     const scanStartedAt = Date.now();
     const { exitCode, logText, runtime } = await spawnUpstreamExe(
@@ -310,6 +324,7 @@ export const invokeUpstreamExporter = async (
       scanDir,
       vendorDir,
       SCAN_TIMEOUT_MS,
+      usePython,
     );
     const scanDurationMs = Date.now() - scanStartedAt;
 
@@ -329,7 +344,7 @@ export const invokeUpstreamExporter = async (
       rows = parseUpstreamOutput(await readFile(outputPath, "utf8"));
       scanSucceeded = rows.length > 0;
     } catch {
-      classifyUpstreamLog(logText, scanDurationMs).forEach((entry) => diagnostics.push(entry));
+      classifyUpstreamLog(logText).forEach((entry) => diagnostics.push(entry));
       diagnostics.push("memory_scan_upstream_no_output");
       if (scanConfig.debugKeepWorkDir && workDir) {
         diagnostics.push(`memory_scan_debug_workdir:${workDir}`);

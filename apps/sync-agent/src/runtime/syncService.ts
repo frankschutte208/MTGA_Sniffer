@@ -32,6 +32,8 @@ import {
   buildArenaMetadataIndex,
   buildDenominatorStats,
   toRarityProgressRows,
+  resolveCollectibleRarity,
+  countCollectibleBasicLands,
 } from "../metadata/denominatorStats.js";
 import { fetchScryfallDefaultCards } from "../metadata/scryfallClient.js";
 import { runMemoryScan } from "./memoryScanner.js";
@@ -164,14 +166,9 @@ export class SyncService {
 
     this.memoryScanInFlight = true;
     try {
-      const debugRunId = `rescan-${Date.now()}`;
       const anchors = this.resolveMemoryAnchors();
       const preEntries = Object.entries(this.state.counts);
       const preNonZeroCards = preEntries.filter(([, count]) => count > 0).length;
-      const preTotalCopies = preEntries.reduce((sum, [, count]) => sum + count, 0);
-      // #region agent log
-      fetch("http://127.0.0.1:7550/ingest/2b83070b-81b8-4e5b-a58a-c619cbd759c2", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d7d7eb" }, body: JSON.stringify({ sessionId: "d7d7eb", runId: debugRunId, hypothesisId: "H1", location: "syncService.ts:forceMemoryScan:start", message: "Manual memory scan invoked", data: { anchorsCount: anchors.length, preNonZeroCards, preTotalCopies, preTrackedCards: preEntries.length }, timestamp: Date.now() }) }).catch(() => {});
-      // #endregion
       if (anchors.length === 0) {
         this.pushDiagnostic("memory_scan_anchors_missing");
         return { ok: false, cardCount: 0 };
@@ -179,9 +176,6 @@ export class SyncService {
       this.pushDiagnostic(`memory_scan_anchors_used:${anchors.length}`);
 
       const result = await runMemoryScan(this.options.memoryScanScriptPath, anchors);
-      // #region agent log
-      fetch("http://127.0.0.1:7550/ingest/2b83070b-81b8-4e5b-a58a-c619cbd759c2", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d7d7eb" }, body: JSON.stringify({ sessionId: "d7d7eb", runId: debugRunId, hypothesisId: "H1", location: "syncService.ts:forceMemoryScan:rawResult", message: "Memory scan raw result", data: { ok: result.ok, rawCards: Object.keys(result.cards).length, diagnostics: result.diagnostics.slice(0, 12) }, timestamp: Date.now() }) }).catch(() => {});
-      // #endregion
       result.diagnostics.forEach((message) => this.pushDiagnostic(message));
 
       if (!result.ok) {
@@ -190,11 +184,6 @@ export class SyncService {
 
       const filteredCards = filterScannedCards(result.cards, new Set(this.localCatalog.keys()));
       const filteredCount = Object.keys(filteredCards).length;
-      const rawCount = Object.keys(result.cards).length;
-      const droppedCount = rawCount - filteredCount;
-      // #region agent log
-      fetch("http://127.0.0.1:7550/ingest/2b83070b-81b8-4e5b-a58a-c619cbd759c2", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d7d7eb" }, body: JSON.stringify({ sessionId: "d7d7eb", runId: debugRunId, hypothesisId: "H2", location: "syncService.ts:forceMemoryScan:filtered", message: "Filtered memory scan cards", data: { rawCount, filteredCount, droppedCount }, timestamp: Date.now() }) }).catch(() => {});
-      // #endregion
       this.pushDiagnostic(`memory_scan_filtered_cards:${filteredCount}`);
       if (filteredCount === 0) {
         this.pushDiagnostic("memory_scan_filtered_empty");
@@ -207,25 +196,6 @@ export class SyncService {
         return { ok: false, cardCount: 0 };
       }
 
-      let changedCards = 0;
-      let increasedCards = 0;
-      let newlyOwnedCards = 0;
-      for (const [cardId, nextCount] of Object.entries(filteredCards)) {
-        const prevCount = Number(this.state.counts[cardId] ?? 0);
-        if (prevCount !== nextCount) {
-          changedCards += 1;
-        }
-        if (nextCount > prevCount) {
-          increasedCards += 1;
-        }
-        if (prevCount <= 0 && nextCount > 0) {
-          newlyOwnedCards += 1;
-        }
-      }
-      // #region agent log
-      fetch("http://127.0.0.1:7550/ingest/2b83070b-81b8-4e5b-a58a-c619cbd759c2", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d7d7eb" }, body: JSON.stringify({ sessionId: "d7d7eb", runId: debugRunId, hypothesisId: "H3", location: "syncService.ts:forceMemoryScan:delta", message: "Pre-merge scan delta stats", data: { changedCards, increasedCards, newlyOwnedCards }, timestamp: Date.now() }) }).catch(() => {});
-      // #endregion
-
       this.handleEvent(
         {
           source: "manual-resync",
@@ -235,12 +205,6 @@ export class SyncService {
         "memory-scan",
       );
       await this.flushToDisk();
-      const postEntries = Object.entries(this.state.counts);
-      const postNonZeroCards = postEntries.filter(([, count]) => count > 0).length;
-      const postTotalCopies = postEntries.reduce((sum, [, count]) => sum + count, 0);
-      // #region agent log
-      fetch("http://127.0.0.1:7550/ingest/2b83070b-81b8-4e5b-a58a-c619cbd759c2", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "d7d7eb" }, body: JSON.stringify({ sessionId: "d7d7eb", runId: debugRunId, hypothesisId: "H4", location: "syncService.ts:forceMemoryScan:postFlush", message: "Post-flush state after memory scan", data: { postNonZeroCards, postTotalCopies, nonZeroDelta: postNonZeroCards - preNonZeroCards, totalCopiesDelta: postTotalCopies - preTotalCopies }, timestamp: Date.now() }) }).catch(() => {});
-      // #endregion
       return { ok: true, cardCount: filteredCount };
     } catch (error) {
       this.pushDiagnostic(`memory_scan_exception:${String(error)}`);
@@ -296,7 +260,8 @@ export class SyncService {
         (entry) =>
           entry.includes("memory_scan_error:") ||
           entry.includes("memory_scan_spawn_error:") ||
-          entry.includes("memory_scan_stderr:"),
+          entry.includes("memory_scan_stderr:") ||
+          entry.includes("memory_scan_upstream_"),
       ) ??
       this.status.diagnostics.find(
         (entry) =>
@@ -552,46 +517,22 @@ export class SyncService {
       if (count <= 0) {
         continue;
       }
-      const rarity =
-        this.metadataByCardId.get(cardId)?.rarity ??
-        this.normalizeRarity(this.localCatalog.get(cardId)?.rarity);
+      const local = this.localCatalog.get(cardId);
+      const meta = this.metadataByCardId.get(cardId);
+      const rarity = resolveCollectibleRarity(local?.rarity, local?.name, meta?.rarity);
       if (!rarity) {
         continue;
       }
       numerators[rarity] += 1;
     }
-    return toRarityProgressRows(this.denominatorStats, numerators);
-  }
-
-  private normalizeRarity(
-    raw: string | undefined,
-  ): "mythic" | "rare" | "uncommon" | "common" | "land" | null {
-    const value = raw?.trim().toLowerCase();
-    switch (value) {
-      case "mythic":
-      case "mythicrare":
-      case "mythic_rare":
-        return "mythic";
-      case "rare":
-        return "rare";
-      case "uncommon":
-        return "uncommon";
-      case "common":
-      case "2":
-        return "common";
-      case "land":
-      case "basic":
-      case "1":
-        return "land";
-      case "3":
-        return "uncommon";
-      case "4":
-        return "rare";
-      case "5":
-        return "mythic";
-      default:
-        return null;
+    const rows = toRarityProgressRows(this.denominatorStats, numerators);
+    const landDenominator = countCollectibleBasicLands(this.localCatalog);
+    if (landDenominator <= 0) {
+      return rows;
     }
+    return rows.map((row) =>
+      row.rarity === "Land" ? { ...row, totalCollectible: landDenominator } : row,
+    );
   }
 
   private toLocalDateKey(isoDate: string): string {

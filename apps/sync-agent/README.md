@@ -75,9 +75,24 @@ Auto memory scan runs every 45 seconds when MTGA is running, the collection is e
 
 ## Memory scan fallback
 
-The packaged app bundles [MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter) — no Python or `pymem` install required.
+Uses pinned [MTGA-collection-exporter](https://github.com/NthPhantom10/MTGA-collection-exporter) via integration glue in `invokeUpstreamExporter.ts`.
 
-**Before scanning:** open **Collection** in MTGA, scroll ~30 seconds, then **Force Memory Scan** from the tray menu.
+| Runtime | When |
+|---------|------|
+| **Python + pinned `mtg.py`** | Default when `py -3` and `pymem` are available |
+| **Bundled vendor exe** | Fallback when Python/pymem is missing |
+
+**Before scanning:** open **Collection** in MTGA, scroll ~30 seconds, then **Force Memory Scan** from the tray menu or overlay.
+
+**Diagnostics:** `GET /sync-status` → `diagnostics` array. Look for `memory_scan_upstream_runtime:python|exe` and `memory_scan_upstream_rows:N`. Do not trust UI text alone — see [integration troubleshooting](../../docs/integration-troubleshooting.md#error-message-mapping-do-not-mislead-users).
+
+Optional owner `scan-config.json` keys: `debugKeepWorkDir`, `debugCopyOutputTo`, `useExeRuntime` (force exe — diagnostics only). See [scanner governance](../../docs/scanner-governance.md).
+
+---
+
+## Overlay rarity progress
+
+**Land** counts use MTGA basic-land rules (rarity code `1` and basic land names), not Scryfall’s `common` label for basics. Denominator for lands is derived from the MTGA local catalog. Details: [integration troubleshooting](../../docs/integration-troubleshooting.md#rarity-progress-basic-lands-counted-as-common).
 
 ---
 

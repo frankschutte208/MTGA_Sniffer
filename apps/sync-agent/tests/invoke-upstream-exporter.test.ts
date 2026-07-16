@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCatalogLookup,
+  classifyUpstreamLog,
   mapUpstreamRowsToCardIds,
   toUpstreamAnchorsJson,
 } from "../src/runtime/scanner/invokeUpstreamExporter.js";
@@ -50,5 +51,36 @@ describe("invokeUpstreamExporter helpers", () => {
       lookup,
     );
     expect(cards).toEqual({ "35573": 2 });
+  });
+});
+
+describe("classifyUpstreamLog", () => {
+  it("maps attach failures without claiming MTGA is closed", () => {
+    expect(
+      classifyUpstreamLog(
+        "Attaching to MTGA.exe...\nMTG Arena not found. Please start the game.",
+      ),
+    ).toEqual(["memory_scan_error:attach_failed"]);
+  });
+
+  it("maps database init failures from bundled exe", () => {
+    expect(classifyUpstreamLog("Loading cached database...\nDatabase init failed.")).toEqual([
+      "memory_scan_upstream_database_init_failed",
+    ]);
+  });
+
+  it("does not guess mtga_not_running from fast scans", () => {
+    expect(classifyUpstreamLog("unexpected upstream output")).toEqual([
+      "memory_scan_upstream_unclassified_failure",
+    ]);
+  });
+
+  it("maps scryfall and local catalog init failures", () => {
+    expect(classifyUpstreamLog("Scryfall download failed: 'download_uri'")).toEqual([
+      "memory_scan_upstream_scryfall_failed",
+    ]);
+    expect(
+      classifyUpstreamLog("Error scanning local files: 'charmap' codec can't encode characters"),
+    ).toEqual(["memory_scan_upstream_local_catalog_failed"]);
   });
 });

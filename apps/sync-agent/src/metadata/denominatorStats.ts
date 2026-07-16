@@ -11,6 +11,47 @@ import type {
 const normalizeCollectorNumber = (value: string | undefined): string =>
   String(value ?? "").trim().toLowerCase();
 
+export const isBasicLandName = (name: string | undefined): boolean => {
+  if (!name) {
+    return false;
+  }
+  return ["plains", "island", "swamp", "mountain", "forest", "wastes"].includes(
+    name.trim().toLowerCase(),
+  );
+};
+
+export const isMtgaBasicLandRarity = (raw: string | undefined): boolean => {
+  const value = raw?.trim().toLowerCase();
+  return value === "1" || value === "land" || value === "basic";
+};
+
+/** MTGA basic lands use rarity code 1; Scryfall labels them common — prefer MTGA for land bucket. */
+export const resolveCollectibleRarity = (
+  localRarity: string | undefined,
+  localName: string | undefined,
+  scryfallRarity?: string,
+): "mythic" | "rare" | "uncommon" | "common" | "land" | null => {
+  if (isMtgaBasicLandRarity(localRarity) || isBasicLandName(localName)) {
+    return "land";
+  }
+  return normalizeRarity(scryfallRarity ?? localRarity);
+};
+
+export const countCollectibleBasicLands = (
+  localCatalog: Map<string, LocalCardMetadata>,
+): number => {
+  let count = 0;
+  for (const meta of localCatalog.values()) {
+    if (!meta.isCollectible) {
+      continue;
+    }
+    if (isMtgaBasicLandRarity(meta.rarity) || isBasicLandName(meta.name)) {
+      count += 1;
+    }
+  }
+  return count;
+};
+
 const normalizeRarity = (raw: string | undefined): "mythic" | "rare" | "uncommon" | "common" | "land" | null => {
   const value = raw?.trim().toLowerCase();
   switch (value) {
@@ -79,7 +120,7 @@ export const buildArenaMetadataIndex = ({
     }
     const key = `${(local.setCode ?? "").toLowerCase()}|${normalizeCollectorNumber(local.collectorNumber)}`;
     const scryfall = scryfallBySetCollector.get(key);
-    const rarity = normalizeRarity(scryfall?.rarity ?? local.rarity);
+    const rarity = resolveCollectibleRarity(local.rarity, local.name, scryfall?.rarity);
     if (!rarity) {
       continue;
     }

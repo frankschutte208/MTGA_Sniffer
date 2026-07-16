@@ -250,7 +250,7 @@ Base URL: `http://localhost:37241` (only when MTGA Sniffer tray app is running).
 | GET | `/collection` | `{ "cards": [...], "status": {...} }` — cards match enriched `CollectionRecord` |
 | GET | `/cards` | Same card array as `/collection` |
 | GET | `/sync-status` | Last sync time, parser version, MTGA running flag |
-| GET | `/overlay-insights` | Recent change dates, rarity progress |
+| GET | `/overlay-insights` | Recent change dates, rarity progress (see below) |
 | GET | `/metadata-status` | Scryfall cache freshness |
 | GET | `/set-format-stats` | `{ "sets": [...] }` |
 | GET | `/sync-history?limit=25` | Recent sync log entries |
@@ -273,6 +273,20 @@ Base URL: `http://localhost:37241` (only when MTGA Sniffer tray app is running).
 ```
 
 `imageUrl` is built when `setCode` and `collectorNumber` are known from the MTGA local catalog.
+
+### Overlay insights (`GET /overlay-insights`)
+
+```json
+{
+  "recentChangeDates": [{ "date": "2026-07-16", "cardsDelta": 24, "uniqueDelta": 3, "lastUpdateAt": "..." }],
+  "rarityProgress": [
+    { "rarity": "Mythic", "ownedUnique": 1264, "totalCollectible": 1844 },
+    { "rarity": "Land", "ownedUnique": 832, "totalCollectible": 1298 }
+  ]
+}
+```
+
+**Land bucket:** basic lands (Plains, Island, Swamp, Mountain, Forest, Wastes) use MTGA rarity code `1`, not Scryfall’s `common` label. Consumer apps mirroring overlay progress should apply the same rule — see [integration-troubleshooting.md](integration-troubleshooting.md#rarity-progress-basic-lands-counted-as-common).
 
 ---
 
@@ -375,6 +389,7 @@ console.log(status.lastSyncAt, owned.length);
 | [README.md](../README.md) | Install and daily use |
 | [apps/sync-agent/README.md](../apps/sync-agent/README.md) | Sync agent and API summary |
 | [scanner-governance.md](scanner-governance.md) | Memory scanner change policy |
+| [integration-troubleshooting.md](integration-troubleshooting.md) | Maintainer lessons (scan runtime, errors, lands) |
 
 ---
 

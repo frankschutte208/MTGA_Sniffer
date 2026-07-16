@@ -80,34 +80,67 @@ const createTrayIcon = () => {
 
 let cachedOverlayBackgroundFileUrls = null;
 
-const loadOverlayBackgroundFileUrls = () => {
-  if (cachedOverlayBackgroundFileUrls) {
+const getOverlayBackgroundsDropDirectory = () =>
+  path.join(getCollectorDataDirectory(), "Backgrounds");
+
+const ensureOverlayBackgroundsDropDirectory = async () => {
+  await mkdir(getOverlayBackgroundsDropDirectory(), { recursive: true });
+};
+
+const listOverlayBackgroundFilesInDirectory = (directory) => {
+  if (!existsSync(directory)) {
+    return [];
+  }
+  return readdirSync(directory)
+    .filter((fileName) => /\.(jpe?g|png)$/i.test(fileName))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
+    .map((fileName) => path.join(directory, fileName));
+};
+
+const loadOverlayBackgroundFileUrls = (options = {}) => {
+  if (!options.force && cachedOverlayBackgroundFileUrls) {
     return cachedOverlayBackgroundFileUrls;
   }
-  const directoryCandidates = [
-    path.resolve(__dirname, "..", "assets", "backgrounds"),
-    path.resolve(__dirname, "..", "..", "..", "Backgrounds"),
-  ];
+
+  const directoryCandidates = [getOverlayBackgroundsDropDirectory()];
+  const packagedBackgrounds = path.resolve(__dirname, "..", "assets", "backgrounds");
+  directoryCandidates.push(packagedBackgrounds);
+  // Dev-only: also pick up repo-root Backgrounds while running from source.
+  if (!app.isPackaged) {
+    directoryCandidates.push(path.resolve(__dirname, "..", "..", "..", "Backgrounds"));
+  }
+
+  const seenNames = new Set();
+  const files = [];
   for (const directory of directoryCandidates) {
-    if (!existsSync(directory)) {
-      continue;
+    for (const filePath of listOverlayBackgroundFilesInDirectory(directory)) {
+      const key = path.basename(filePath).toLowerCase();
+      if (seenNames.has(key)) {
+        continue;
+      }
+      seenNames.add(key);
+      files.push(filePath);
     }
-    const files = readdirSync(directory)
-      .filter((fileName) => /\.(jpe?g|png)$/i.test(fileName))
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
-    if (files.length === 0) {
-      continue;
-    }
-    cachedOverlayBackgroundFileUrls = files.map((fileName) =>
-      pathToFileURL(path.join(directory, fileName)).href,
-    );
-    return cachedOverlayBackgroundFileUrls;
   }
-  cachedOverlayBackgroundFileUrls = [];
+
+  cachedOverlayBackgroundFileUrls = files.map((filePath) => pathToFileURL(filePath).href);
   return cachedOverlayBackgroundFileUrls;
 };
 
 const getOverlayBackgroundsJson = () => JSON.stringify(loadOverlayBackgroundFileUrls());
+
+const pushOverlayBackgroundsToTooltip = () => {
+  const urls = loadOverlayBackgroundFileUrls({ force: true });
+  if (!tooltipWindow || tooltipWindow.isDestroyed()) {
+    return urls.length;
+  }
+  const payload = JSON.stringify(urls);
+  void tooltipWindow.webContents.executeJavaScript(
+    `window.__setOverlayBackgrounds && window.__setOverlayBackgrounds(${payload});`,
+    true,
+  );
+  return urls.length;
+};
 
 let cachedAppIconDataUrl = null;
 
@@ -269,7 +302,13 @@ const applyCircularShape = (win, size) => {
 
 const formatRescanFailureMessage = (status) => {
   const diagnostics = Array.isArray(status?.diagnostics) ? status.diagnostics : [];
+  const mtgaRunning = Boolean(status?.isMtgaRunning);
   const findDiagnostic = (needle) => diagnostics.find((entry) => entry.includes(needle));
+  const upstreamLogEntry = findDiagnostic("memory_scan_upstream_log:");
+  const upstreamLogSnippet = upstreamLogEntry
+    ? String(upstreamLogEntry.split("memory_scan_upstream_log:")[1] ?? "").trim().slice(0, 120)
+    : "";
+
   if (findDiagnostic("memory_scan_skipped:already_running")) {
     return "Rescan failed: scan already in progress";
   }
@@ -282,8 +321,19 @@ const formatRescanFailureMessage = (status) => {
   if (findDiagnostic("memory_scan_upstream_no_blocks")) {
     return "Rescan failed: found anchor hits but no collection block (retry from Collection tab)";
   }
-  if (findDiagnostic("memory_scan_error:mtga_not_running")) {
-    return "Rescan failed: MTGA not running (launch MTGA first)";
+  if (findDiagnostic("memory_scan_upstream_database_init_failed")) {
+    return "Rescan failed: upstream card database could not initialize";
+  }
+  if (findDiagnostic("memory_scan_upstream_scryfall_failed")) {
+    return "Rescan failed: upstream could not download card database from Scryfall";
+  }
+  if (findDiagnostic("memory_scan_upstream_local_catalog_failed")) {
+    return "Rescan failed: upstream could not read local MTGA card files";
+  }
+  if (findDiagnostic("memory_scan_error:attach_failed")) {
+    return mtgaRunning
+      ? "Rescan failed: scanner could not attach to MTGA process"
+      : "Rescan failed: MTGA not running (launch MTGA first)";
   }
   if (findDiagnostic("memory_scan_upstream_anchors_not_found")) {
     return "Rescan failed: anchors not in MTGA memory — open Collection, scroll slowly top to bottom, retry";
@@ -302,8 +352,27 @@ const formatRescanFailureMessage = (status) => {
     }
     return "Rescan failed: partial scan rejected";
   }
-  if (findDiagnostic("mtga_not_running")) {
-    return "Rescan failed: MTGA not running";
+  if (findDiagnostic("memory_scan_anchors_missing")) {
+    return "Rescan failed: no memory anchors configured";
+  }
+  if (findDiagnostic("memory_scan_timeout:")) {
+    return "Rescan failed: scan timed out";
+  }
+  if (findDiagnostic("memory_scan_spawn_error:")) {
+    return "Rescan failed: could not start upstream scanner";
+  }
+  if (findDiagnostic("memory_scan_upstream_empty_log")) {
+    return mtgaRunning
+      ? "Rescan failed: upstream scanner produced no output"
+      : "Rescan failed: MTGA not running (launch MTGA first)";
+  }
+  if (findDiagnostic("memory_scan_upstream_unclassified_failure")) {
+    return upstreamLogSnippet
+      ? `Rescan failed: ${upstreamLogSnippet}`
+      : "Rescan failed: upstream scanner exited without collection output";
+  }
+  if (findDiagnostic("memory_scan_error:mtga_not_running") && !mtgaRunning) {
+    return "Rescan failed: MTGA not running (launch MTGA first)";
   }
   if (findDiagnostic("memory_scan_exit_code:2")) {
     const matchedEntry = findDiagnostic("memory_scan_anchors_matched:");
@@ -322,7 +391,10 @@ const formatRescanFailureMessage = (status) => {
       return `Rescan failed (exit code ${exitCode})`;
     }
   }
-  return "Rescan failed";
+  if (!mtgaRunning) {
+    return "Rescan failed: MTGA not running (launch MTGA first)";
+  }
+  return upstreamLogSnippet ? `Rescan failed: ${upstreamLogSnippet}` : "Rescan failed";
 };
 
 const getLaunchAtLogin = () =>
@@ -371,6 +443,21 @@ const updateMenu = () => {
       label: "Configure Memory Anchors",
       click: () => {
         void openAnchorConfigWindow();
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Open Backgrounds Folder",
+      click: () => {
+        void ensureOverlayBackgroundsDropDirectory().then(() => {
+          void shell.openPath(getOverlayBackgroundsDropDirectory());
+        });
+      },
+    },
+    {
+      label: "Rescan Backgrounds",
+      click: () => {
+        pushOverlayBackgroundsToTooltip();
       },
     },
     { type: "separator" },
@@ -425,13 +512,19 @@ const refreshStatus = async () => {
         : "No collection cards seen yet";
     const metadataFreshness = formatMetadataFreshness(metadata.lastRefreshedAt);
     const metadataStaleNote = metadata.stale ? " (stale)" : "";
+    const scanFailureHint = data.statusDetail
+      ? formatRescanFailureMessage({
+          isMtgaRunning: data.isMtgaRunning,
+          diagnostics: [String(data.statusDetail)],
+        }).replace(/^Rescan failed:\s*/, "")
+      : null;
     cachedOverlayPayload = {
       statusLine: mtgaState,
       summaryLine:
         data.totalCopies > 0
           ? `${Number(data.totalCopies).toLocaleString()} cards • ${Number(data.nonZeroCards).toLocaleString()} unique`
-          : data.statusDetail
-            ? `Zero cards yet. ${String(data.statusDetail).replace(/^.*memory_scan_/, "scan: ")}`
+          : scanFailureHint
+            ? `Zero cards yet. ${scanFailureHint}`
             : "Zero collection cards seen yet",
       autoScanLine: `Auto memory scan: ${String(data.autoScanStatus || "inactive (manual rescan only)")}`,
       metadataFreshnessLine: `Metadata updated: ${metadataFreshness}${metadataStaleNote}`,
@@ -829,19 +922,33 @@ const tooltipHtml = () => `<!doctype html>
     const { ipcRenderer } = require("electron");
     const card = document.getElementById("card");
     const cardBg = document.getElementById("cardBg");
-    const overlayBackgrounds = ${getOverlayBackgroundsJson()};
+    let overlayBackgrounds = ${getOverlayBackgroundsJson()};
     let overlayBackgroundIndex = 0;
+    let overlayBackgroundRotateTimer = null;
     const applyOverlayBackground = (index) => {
       if (!cardBg || overlayBackgrounds.length === 0) {
         return;
       }
       cardBg.style.backgroundImage = 'url("' + overlayBackgrounds[index] + '")';
     };
-    if (overlayBackgrounds.length > 0) {
+    const startOverlayBackgroundRotation = () => {
+      if (overlayBackgroundRotateTimer) {
+        clearInterval(overlayBackgroundRotateTimer);
+        overlayBackgroundRotateTimer = null;
+      }
+      if (!cardBg) {
+        return;
+      }
+      if (overlayBackgrounds.length === 0) {
+        cardBg.style.backgroundImage = "";
+        cardBg.style.opacity = "1";
+        return;
+      }
       overlayBackgroundIndex = Math.floor(Math.random() * overlayBackgrounds.length);
       applyOverlayBackground(overlayBackgroundIndex);
+      cardBg.style.opacity = "1";
       if (overlayBackgrounds.length > 1) {
-        setInterval(() => {
+        overlayBackgroundRotateTimer = setInterval(() => {
           overlayBackgroundIndex = (overlayBackgroundIndex + 1) % overlayBackgrounds.length;
           cardBg.style.opacity = "0";
           setTimeout(() => {
@@ -850,7 +957,12 @@ const tooltipHtml = () => `<!doctype html>
           }, 280);
         }, ${OVERLAY_BACKGROUND_ROTATE_MS});
       }
-    }
+    };
+    startOverlayBackgroundRotation();
+    window.__setOverlayBackgrounds = (urls) => {
+      overlayBackgrounds = Array.isArray(urls) ? urls : [];
+      startOverlayBackgroundRotation();
+    };
     const status = document.getElementById("status");
     const summary = document.getElementById("summary");
     const metaFreshness = document.getElementById("metaFreshness");
@@ -1291,6 +1403,7 @@ const syncOverlayPlacement = async () => {
 };
 
 app.whenReady().then(async () => {
+  await ensureOverlayBackgroundsDropDirectory();
   tray = new Tray(createTrayIcon());
 
   ipcMain.on("overlay-icon-enter", () => {

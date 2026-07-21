@@ -78,7 +78,7 @@ const createTrayIcon = () => {
   return image.resize({ width: 32, height: 32, quality: "best" });
 };
 
-let cachedOverlayBackgroundFileUrls = null;
+let overlayBackgroundItems = null;
 
 const getOverlayBackgroundsDropDirectory = () =>
   path.join(getCollectorDataDirectory(), "Backgrounds");
@@ -87,19 +87,29 @@ const ensureOverlayBackgroundsDropDirectory = async () => {
   await mkdir(getOverlayBackgroundsDropDirectory(), { recursive: true });
 };
 
+const classifyOverlayBackgroundFile = (fileName) => {
+  if (/\.mp4$/i.test(fileName)) {
+    return "video";
+  }
+  if (/\.(jpe?g|png)$/i.test(fileName)) {
+    return "image";
+  }
+  return null;
+};
+
 const listOverlayBackgroundFilesInDirectory = (directory) => {
   if (!existsSync(directory)) {
     return [];
   }
   return readdirSync(directory)
-    .filter((fileName) => /\.(jpe?g|png)$/i.test(fileName))
+    .filter((fileName) => classifyOverlayBackgroundFile(fileName))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
     .map((fileName) => path.join(directory, fileName));
 };
 
-const loadOverlayBackgroundFileUrls = (options = {}) => {
-  if (!options.force && cachedOverlayBackgroundFileUrls) {
-    return cachedOverlayBackgroundFileUrls;
+const scanOverlayBackgroundItems = () => {
+  if (overlayBackgroundItems) {
+    return overlayBackgroundItems;
   }
 
   const directoryCandidates = [getOverlayBackgroundsDropDirectory()];
@@ -111,35 +121,39 @@ const loadOverlayBackgroundFileUrls = (options = {}) => {
   }
 
   const seenNames = new Set();
-  const files = [];
+  const items = [];
   for (const directory of directoryCandidates) {
     for (const filePath of listOverlayBackgroundFilesInDirectory(directory)) {
       const key = path.basename(filePath).toLowerCase();
       if (seenNames.has(key)) {
         continue;
       }
+      const mediaType = classifyOverlayBackgroundFile(path.basename(filePath));
+      if (!mediaType) {
+        continue;
+      }
       seenNames.add(key);
-      files.push(filePath);
+      items.push({
+        type: mediaType,
+        url: pathToFileURL(filePath).href,
+      });
     }
   }
 
-  cachedOverlayBackgroundFileUrls = files.map((filePath) => pathToFileURL(filePath).href);
-  return cachedOverlayBackgroundFileUrls;
+  overlayBackgroundItems = items;
+  return overlayBackgroundItems;
 };
 
-const getOverlayBackgroundsJson = () => JSON.stringify(loadOverlayBackgroundFileUrls());
+const getOverlayBackgroundItemsJson = () => JSON.stringify(scanOverlayBackgroundItems());
 
-const pushOverlayBackgroundsToTooltip = () => {
-  const urls = loadOverlayBackgroundFileUrls({ force: true });
+const notifyOverlayMediaVisibility = (visible) => {
   if (!tooltipWindow || tooltipWindow.isDestroyed()) {
-    return urls.length;
+    return;
   }
-  const payload = JSON.stringify(urls);
   void tooltipWindow.webContents.executeJavaScript(
-    `window.__setOverlayBackgrounds && window.__setOverlayBackgrounds(${payload});`,
+    `window.__setOverlayMediaVisibility && window.__setOverlayMediaVisibility(${visible ? "true" : "false"});`,
     true,
   );
-  return urls.length;
 };
 
 let cachedAppIconDataUrl = null;
@@ -277,6 +291,20 @@ const formatMetadataFreshness = (lastRefreshedAt) => {
   }
   const ageDays = Math.floor(ageHours / 24);
   return `${ageDays}d ago`;
+};
+
+const formatMetadataStatusLine = (metadata) => {
+  const freshness = formatMetadataFreshness(metadata?.lastRefreshedAt);
+  const staleNote = metadata?.stale ? " (stale)" : "";
+  if (metadata?.lastError) {
+    const errorText = String(metadata.lastError).slice(0, 140);
+    return `Scryfall: ${freshness}${staleNote} · ${errorText}`;
+  }
+  if (metadata?.detail) {
+    const detailText = String(metadata.detail).slice(0, 140);
+    return `Scryfall: ${freshness}${staleNote} · ${detailText}`;
+  }
+  return `Scryfall: ${freshness}${staleNote}`;
 };
 
 const applyCircularShape = (win, size) => {
@@ -454,12 +482,6 @@ const updateMenu = () => {
         });
       },
     },
-    {
-      label: "Rescan Backgrounds",
-      click: () => {
-        pushOverlayBackgroundsToTooltip();
-      },
-    },
     { type: "separator" },
     ...(process.platform === "win32"
       ? [
@@ -510,8 +532,7 @@ const refreshStatus = async () => {
       data.totalCopies > 0
         ? `${Number(data.totalCopies).toLocaleString()} copies • ${Number(data.nonZeroCards).toLocaleString()} unique`
         : "No collection cards seen yet";
-    const metadataFreshness = formatMetadataFreshness(metadata.lastRefreshedAt);
-    const metadataStaleNote = metadata.stale ? " (stale)" : "";
+    const metadataFreshnessLine = formatMetadataStatusLine(metadata);
     const scanFailureHint = data.statusDetail
       ? formatRescanFailureMessage({
           isMtgaRunning: data.isMtgaRunning,
@@ -527,7 +548,7 @@ const refreshStatus = async () => {
             ? `Zero cards yet. ${scanFailureHint}`
             : "Zero collection cards seen yet",
       autoScanLine: `Auto memory scan: ${String(data.autoScanStatus || "inactive (manual rescan only)")}`,
-      metadataFreshnessLine: `Metadata updated: ${metadataFreshness}${metadataStaleNote}`,
+      metadataFreshnessLine,
       recentChangeDates: Array.isArray(insights.recentChangeDates) ? insights.recentChangeDates : [],
       rarityProgress: Array.isArray(insights.rarityProgress) ? insights.rarityProgress : [],
       rescanState: rescanUiState,
@@ -539,7 +560,7 @@ const refreshStatus = async () => {
     cachedOverlayPayload = {
       statusLine: startupErrorMessage ? "Startup error" : "Sniffer offline",
       summaryLine: startupErrorMessage ?? "Waiting for sync agent",
-      metadataFreshnessLine: "Metadata updated: unknown",
+      metadataFreshnessLine: "Scryfall: unknown",
       autoScanLine: "Auto memory scan: inactive",
       recentChangeDates: [],
       rarityProgress: [],
@@ -732,6 +753,16 @@ const tooltipHtml = () => `<!doctype html>
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.48);
       overflow: hidden;
     }
+    .card-media {
+      position: absolute;
+      inset: 0;
+      border-radius: 11px;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 0.55s ease;
+      z-index: 0;
+      pointer-events: none;
+    }
     .card-bg {
       position: absolute;
       inset: 0;
@@ -739,13 +770,17 @@ const tooltipHtml = () => `<!doctype html>
       background-size: cover;
       background-position: center center;
       background-repeat: no-repeat;
-      opacity: 1;
-      transition: opacity 0.55s ease;
-      z-index: 0;
-      pointer-events: none;
     }
-    .card-bg::after {
-      content: "";
+    .card-bg-video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+      border-radius: 11px;
+    }
+    .card-bg-shade {
       position: absolute;
       inset: 0;
       border-radius: 11px;
@@ -755,6 +790,8 @@ const tooltipHtml = () => `<!doctype html>
         rgba(8, 10, 18, 0.72) 52%,
         rgba(8, 10, 18, 0.92) 100%
       );
+      z-index: 1;
+      pointer-events: none;
     }
     .card-content {
       position: relative;
@@ -763,6 +800,28 @@ const tooltipHtml = () => `<!doctype html>
       flex-direction: column;
       flex: 1;
       min-height: 0;
+    }
+    .video-mute-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 3;
+      display: none;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: rgba(8, 10, 16, 0.72);
+      color: #fff8ea;
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    }
+    .video-mute-btn:hover {
+      background: rgba(20, 24, 34, 0.9);
+      border-color: rgba(255, 210, 130, 0.45);
     }
     .status {
       font-weight: 700;
@@ -887,11 +946,23 @@ const tooltipHtml = () => `<!doctype html>
 </head>
 <body>
   <div id="card" class="card">
-    <div id="cardBg" class="card-bg" aria-hidden="true"></div>
+    <div id="cardMedia" class="card-media" aria-hidden="true">
+      <div id="cardBg" class="card-bg"></div>
+      <video id="cardBgVideo" class="card-bg-video" playsinline loop preload="none"></video>
+      <div class="card-bg-shade"></div>
+    </div>
     <div class="card-content">
+    <button
+      id="videoMuteBtn"
+      class="video-mute-btn"
+      type="button"
+      aria-label="Unmute video"
+      aria-pressed="true"
+      title="Unmute video"
+    >🔇</button>
     <div id="status" class="status">Sniffer offline</div>
     <div id="summary" class="summary">Waiting for sync agent</div>
-    <div id="metaFreshness" class="meta-tight">Metadata updated: unknown</div>
+    <div id="metaFreshness" class="meta-tight">Scryfall: unknown</div>
     <div id="autoScan" class="meta">Auto memory scan: inactive</div>
     <div id="contentScroll" class="scroll-content">
       <div class="section-title">Recent Changes</div>
@@ -921,48 +992,128 @@ const tooltipHtml = () => `<!doctype html>
   <script>
     const { ipcRenderer } = require("electron");
     const card = document.getElementById("card");
+    const cardMedia = document.getElementById("cardMedia");
     const cardBg = document.getElementById("cardBg");
-    let overlayBackgrounds = ${getOverlayBackgroundsJson()};
-    let overlayBackgroundIndex = 0;
+    const cardBgVideo = document.getElementById("cardBgVideo");
+    const videoMuteBtn = document.getElementById("videoMuteBtn");
+    let overlayBackgroundItems = ${getOverlayBackgroundItemsJson()};
+    let currentBackgroundIndex = -1;
+    let overlayMediaVisible = false;
+    let videoMutedByUser = true;
     let overlayBackgroundRotateTimer = null;
-    const applyOverlayBackground = (index) => {
-      if (!cardBg || overlayBackgrounds.length === 0) {
+    const updateVideoMuteButton = () => {
+      if (!videoMuteBtn || !cardBgVideo) {
         return;
       }
-      cardBg.style.backgroundImage = 'url("' + overlayBackgrounds[index] + '")';
+      const isVideoActive = cardBgVideo.style.display !== "none" && Boolean(cardBgVideo.getAttribute("src"));
+      videoMuteBtn.style.display = isVideoActive ? "block" : "none";
+      videoMuteBtn.textContent = videoMutedByUser ? "🔇" : "🔊";
+      videoMuteBtn.setAttribute("aria-pressed", videoMutedByUser ? "true" : "false");
+      videoMuteBtn.setAttribute("aria-label", videoMutedByUser ? "Unmute video" : "Mute video");
+      videoMuteBtn.title = videoMutedByUser ? "Unmute video" : "Mute video";
+    };
+    const syncVideoPlayback = () => {
+      if (!cardBgVideo || cardBgVideo.style.display === "none" || !cardBgVideo.getAttribute("src")) {
+        updateVideoMuteButton();
+        return;
+      }
+      cardBgVideo.muted = !overlayMediaVisible || videoMutedByUser;
+      if (overlayMediaVisible) {
+        void cardBgVideo.play().catch(() => {});
+      } else {
+        cardBgVideo.pause();
+      }
+      updateVideoMuteButton();
+    };
+    const stopActiveVideo = () => {
+      if (!cardBgVideo) {
+        return;
+      }
+      cardBgVideo.pause();
+      cardBgVideo.muted = true;
+      cardBgVideo.removeAttribute("src");
+      cardBgVideo.load();
+      cardBgVideo.style.display = "none";
+      updateVideoMuteButton();
+    };
+    const applyOverlayBackground = (index) => {
+      const item = overlayBackgroundItems[index];
+      if (!cardBg || !cardMedia || !item) {
+        return;
+      }
+      currentBackgroundIndex = index;
+      stopActiveVideo();
+      if (item.type === "video") {
+        cardBg.style.backgroundImage = "";
+        cardBg.style.display = "none";
+        cardBgVideo.style.display = "block";
+        cardBgVideo.src = item.url;
+        cardBgVideo.load();
+        syncVideoPlayback();
+        return;
+      }
+      cardBg.style.display = "block";
+      cardBg.style.backgroundImage = 'url("' + item.url + '")';
+    };
+    const pickRandomBackgroundIndex = () => {
+      if (overlayBackgroundItems.length === 0) {
+        return -1;
+      }
+      if (overlayBackgroundItems.length === 1) {
+        return 0;
+      }
+      let next = currentBackgroundIndex;
+      while (next === currentBackgroundIndex) {
+        next = Math.floor(Math.random() * overlayBackgroundItems.length);
+      }
+      return next;
+    };
+    const fadeRotateOverlayBackground = () => {
+      if (overlayBackgroundItems.length === 0) {
+        stopActiveVideo();
+        if (cardBg) {
+          cardBg.style.backgroundImage = "";
+        }
+        return;
+      }
+      cardMedia.style.opacity = "0";
+      setTimeout(() => {
+        applyOverlayBackground(pickRandomBackgroundIndex());
+        cardMedia.style.opacity = "1";
+      }, 280);
     };
     const startOverlayBackgroundRotation = () => {
       if (overlayBackgroundRotateTimer) {
         clearInterval(overlayBackgroundRotateTimer);
         overlayBackgroundRotateTimer = null;
       }
-      if (!cardBg) {
+      if (overlayBackgroundItems.length === 0) {
+        stopActiveVideo();
+        if (cardBg) {
+          cardBg.style.backgroundImage = "";
+        }
         return;
       }
-      if (overlayBackgrounds.length === 0) {
-        cardBg.style.backgroundImage = "";
-        cardBg.style.opacity = "1";
-        return;
-      }
-      overlayBackgroundIndex = Math.floor(Math.random() * overlayBackgrounds.length);
-      applyOverlayBackground(overlayBackgroundIndex);
-      cardBg.style.opacity = "1";
-      if (overlayBackgrounds.length > 1) {
-        overlayBackgroundRotateTimer = setInterval(() => {
-          overlayBackgroundIndex = (overlayBackgroundIndex + 1) % overlayBackgrounds.length;
-          cardBg.style.opacity = "0";
-          setTimeout(() => {
-            applyOverlayBackground(overlayBackgroundIndex);
-            cardBg.style.opacity = "1";
-          }, 280);
-        }, ${OVERLAY_BACKGROUND_ROTATE_MS});
+      applyOverlayBackground(pickRandomBackgroundIndex());
+      cardMedia.style.opacity = "1";
+      if (overlayBackgroundItems.length > 1) {
+        overlayBackgroundRotateTimer = setInterval(
+          fadeRotateOverlayBackground,
+          ${OVERLAY_BACKGROUND_ROTATE_MS},
+        );
       }
     };
+    window.__setOverlayMediaVisibility = (visible) => {
+      overlayMediaVisible = Boolean(visible);
+      syncVideoPlayback();
+    };
+    if (videoMuteBtn) {
+      videoMuteBtn.addEventListener("click", () => {
+        videoMutedByUser = !videoMutedByUser;
+        syncVideoPlayback();
+      });
+    }
     startOverlayBackgroundRotation();
-    window.__setOverlayBackgrounds = (urls) => {
-      overlayBackgrounds = Array.isArray(urls) ? urls : [];
-      startOverlayBackgroundRotation();
-    };
     const status = document.getElementById("status");
     const summary = document.getElementById("summary");
     const metaFreshness = document.getElementById("metaFreshness");
@@ -1159,15 +1310,16 @@ const ensureTooltipWindow = () => {
   });
   tooltipWindow.setAlwaysOnTop(true, "screen-saver");
   tooltipWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  const backgroundCount = loadOverlayBackgroundFileUrls().length;
+  const backgroundItems = scanOverlayBackgroundItems();
   void tooltipWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(tooltipHtml())}`);
   tooltipWindow.webContents.on("did-finish-load", () => {
     if (tooltipWindow?.isDestroyed()) {
       return;
     }
+    notifyOverlayMediaVisibility(tooltipWindow.isVisible());
     tooltipWindow.webContents
       .executeJavaScript(
-        `console.log("overlay backgrounds loaded: ${backgroundCount}, version: v${APP_VERSION}");`,
+        `console.log("overlay backgrounds loaded: ${backgroundItems.length}, version: v${APP_VERSION}");`,
         true,
       )
       .catch(() => {});
@@ -1232,6 +1384,7 @@ const hideTooltipNow = () => {
   if (tooltipWindow && !tooltipWindow.isDestroyed()) {
     tooltipWindow.hide();
   }
+  notifyOverlayMediaVisibility(false);
 };
 
 const scheduleTooltipHide = () => {
@@ -1275,6 +1428,7 @@ const showTooltip = () => {
   if (!win.isVisible()) {
     win.showInactive();
   }
+  notifyOverlayMediaVisibility(true);
 };
 
 const pushOverlayPayload = () => {
@@ -1404,6 +1558,7 @@ const syncOverlayPlacement = async () => {
 
 app.whenReady().then(async () => {
   await ensureOverlayBackgroundsDropDirectory();
+  scanOverlayBackgroundItems();
   tray = new Tray(createTrayIcon());
 
   ipcMain.on("overlay-icon-enter", () => {

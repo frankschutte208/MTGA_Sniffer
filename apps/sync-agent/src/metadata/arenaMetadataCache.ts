@@ -37,6 +37,7 @@ export interface DenominatorStatsFile {
 
 export interface ScryfallCacheFile {
   fetchedAt: string;
+  bulkUpdatedAt?: string;
   cards: ScryfallCardLite[];
 }
 

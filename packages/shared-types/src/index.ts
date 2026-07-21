@@ -58,6 +58,8 @@ export interface MetadataStatus {
   source: "scryfall+local" | "local_fallback" | "unavailable";
   lastRefreshedAt: string | null;
   stale: boolean;
+  detail?: string;
+  lastError?: string | null;
 }
 
 export interface SetFormatStat {

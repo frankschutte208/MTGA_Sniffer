@@ -20,8 +20,7 @@ import { PARSER_VERSION } from "../constants.js";
 import {
   type DenominatorStatsFile,
   type MetadataCachePaths,
-  isStale,
-  loadDenominatorStats,
+  loadScryfallArenaLookup,
   loadScryfallCache,
   saveArenaMetadataIndex,
   saveDenominatorStats,
@@ -35,7 +34,11 @@ import {
   resolveCollectibleRarity,
   countCollectibleBasicLands,
 } from "../metadata/denominatorStats.js";
-import { fetchScryfallDefaultCards } from "../metadata/scryfallClient.js";
+import {
+  fetchDefaultCardsBulkRef,
+  isBulkDataNewer,
+  refreshScryfallDefaultCards,
+} from "../metadata/scryfallClient.js";
 import { runMemoryScan } from "./memoryScanner.js";
 import { filterScannedCards } from "./scanner/filter.js";
 import { isMtgaRunning } from "./mtgaProcessDetector.js";
@@ -98,6 +101,8 @@ export class SyncService {
     source: "unavailable",
     lastRefreshedAt: null,
     stale: true,
+    detail: "Metadata not loaded yet",
+    lastError: null,
   };
   private readonly metadataPaths: MetadataCachePaths;
   private state: CollectionState = createEmptyCollectionState();
@@ -547,37 +552,64 @@ export class SyncService {
   }
 
   private async refreshMetadataCache(): Promise<void> {
+    let lastError: string | null = null;
+    let detail: string | undefined;
+    let bulkRefUpdatedAt: string | null = null;
+
     try {
-      const cachedStats = await loadDenominatorStats(this.metadataPaths);
       const cachedScryfall = await loadScryfallCache(this.metadataPaths);
-      const lastScryfallRefreshAt = cachedScryfall?.fetchedAt ?? null;
-      const needsRefresh = !lastScryfallRefreshAt || isStale(lastScryfallRefreshAt);
+      const cachedLookup = await loadScryfallArenaLookup(this.metadataPaths);
       let scryfallCards = cachedScryfall?.cards ?? [];
-      let effectiveMetadataUpdatedAt =
-        lastScryfallRefreshAt ?? cachedStats?.updatedAt ?? null;
-      // Source semantics:
-      // - scryfall+local: live Scryfall fetch succeeded in this startup cycle.
-      // - local_fallback: local cache/local catalog path (no live fetch this cycle).
+      let effectiveMetadataUpdatedAt = cachedScryfall?.fetchedAt ?? null;
       let source: MetadataStatus["source"] = "local_fallback";
 
-      if (needsRefresh) {
-        try {
-          const fetched = await fetchScryfallDefaultCards();
-          scryfallCards = fetched.cards;
-          await saveScryfallCache(this.metadataPaths, fetched);
+      try {
+        const fetched = await refreshScryfallDefaultCards(cachedScryfall, {
+          arenaLookup: cachedLookup?.lookup ?? null,
+        });
+        bulkRefUpdatedAt = fetched.bulkUpdatedAt;
+        scryfallCards = fetched.cards;
+        effectiveMetadataUpdatedAt = fetched.fetchedAt;
+
+        if (fetched.skippedDownload) {
+          detail = `bulk unchanged (${this.formatMetadataTimestamp(fetched.bulkUpdatedAt)}); using cache`;
+          source = "local_fallback";
+          this.pushDiagnostic(`metadata_scryfall_skipped:bulk_unchanged:${fetched.bulkUpdatedAt}`);
+          if (cachedScryfall && cachedScryfall.bulkUpdatedAt !== fetched.bulkUpdatedAt) {
+            await saveScryfallCache(this.metadataPaths, {
+              ...cachedScryfall,
+              bulkUpdatedAt: fetched.bulkUpdatedAt,
+            });
+          }
+        } else {
+          await saveScryfallCache(this.metadataPaths, {
+            fetchedAt: fetched.fetchedAt,
+            bulkUpdatedAt: fetched.bulkUpdatedAt,
+            cards: fetched.cards,
+          });
           await saveScryfallArenaLookup(
             this.metadataPaths,
             fetched.fetchedAt,
             fetched.arenaIdLookup,
           );
           source = "scryfall+local";
-          effectiveMetadataUpdatedAt = fetched.fetchedAt;
+          detail = `downloaded ${fetched.cards.length.toLocaleString()} cards`;
           this.pushDiagnostic(`metadata_scryfall_cards:${fetched.cards.length}`);
           this.pushDiagnostic(
             `metadata_scryfall_arena_lookup:${Object.keys(fetched.arenaIdLookup).length}`,
           );
-        } catch (error) {
-          this.pushDiagnostic(`metadata_scryfall_refresh_failed:${String(error)}`);
+        }
+      } catch (error) {
+        lastError = this.formatMetadataError(error);
+        detail = `refresh failed: ${lastError}`;
+        this.pushDiagnostic(`metadata_scryfall_refresh_failed:${lastError}`);
+        try {
+          const bulkRef = await fetchDefaultCardsBulkRef();
+          bulkRefUpdatedAt = bulkRef.updated_at;
+        } catch (bulkError) {
+          this.pushDiagnostic(
+            `metadata_scryfall_bulk_index_failed:${this.formatMetadataError(bulkError)}`,
+          );
         }
       }
 
@@ -597,20 +629,46 @@ export class SyncService {
         this.metadataByCardId.set(row.cardId, { rarity: row.rarity });
       }
 
+      const cachedBulkUpdatedAt =
+        cachedScryfall?.bulkUpdatedAt ?? cachedScryfall?.fetchedAt ?? null;
+      const stale = lastError
+        ? isBulkDataNewer(bulkRefUpdatedAt, cachedBulkUpdatedAt)
+        : false;
+
       this.metadataStatus = {
         source: stats.source,
         lastRefreshedAt: effectiveMetadataUpdatedAt ?? stats.updatedAt,
-        stale: isStale(effectiveMetadataUpdatedAt ?? stats.updatedAt),
+        stale,
+        detail,
+        lastError,
       };
       this.pushDiagnostic(`metadata_refresh_ok:${stats.source}:${index.cards.length}`);
     } catch (error) {
+      lastError = this.formatMetadataError(error);
       this.metadataStatus = {
         source: "unavailable",
         lastRefreshedAt: this.metadataStatus.lastRefreshedAt,
         stale: true,
+        detail: `metadata rebuild failed: ${lastError}`,
+        lastError,
       };
-      this.pushDiagnostic(`metadata_refresh_error:${String(error)}`);
+      this.pushDiagnostic(`metadata_refresh_error:${lastError}`);
     }
+  }
+
+  private formatMetadataTimestamp(isoDate: string): string {
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) {
+      return isoDate;
+    }
+    return date.toLocaleString();
+  }
+
+  private formatMetadataError(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message.replace(/\s+/g, " ").trim();
+    }
+    return String(error).replace(/\s+/g, " ").trim();
   }
 
   private resolveMemoryAnchors(): Array<{ cardId: number; quantity: number }> {
